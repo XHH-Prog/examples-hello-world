@@ -20,6 +20,33 @@ Deno.serve(async (request) => {
   }
 
   try {
+    // ===== 新增：/sync 合并接口（上报 + 拉指令） =====
+    if (path === "/sync" && method === "GET") {
+      const id = url.searchParams.get("client") || "1";
+      const write = url.searchParams.get("write") !== "0";
+
+      if (write) {
+        await kv.set([`client_${id}`], JSON.stringify({
+          status: parseInt(url.searchParams.get("status") || "0") || 0,
+          task: url.searchParams.get("task") || "",
+          progress: url.searchParams.get("progress") || "0%",
+          error: url.searchParams.get("error") || "",
+          ver: url.searchParams.get("ver") || "",
+          heartbeat: Date.now(),
+        }));
+      }
+
+      const res = await kv.get([`cmd_${id}`]);
+      if (!res.value) return json({ ok: true, cmd: "" }, 200, headers);
+      const cmd = JSON.parse(res.value as string);
+      await kv.delete([`cmd_${id}`]);
+      if (Date.now() - cmd.time > 5 * 60 * 1000) {
+        return json({ ok: true, cmd: "" }, 200, headers);
+      }
+      return json({ ok: true, ...cmd }, 200, headers);
+    }
+
+    // ===== 上报状态 =====
     if (path === "/report" && method === "GET") {
       const id = url.searchParams.get("client") || "1";
       await kv.set([`client_${id}`], JSON.stringify({
@@ -32,6 +59,7 @@ Deno.serve(async (request) => {
       return json({ ok: true }, 200, headers);
     }
 
+    // ===== 拉取所有状态 =====
     if (path === "/list" && method === "GET") {
       const iter = kv.list({ prefix: ["client_"] });
       const results: any[] = [];
@@ -43,6 +71,7 @@ Deno.serve(async (request) => {
       return json(results, 200, headers);
     }
 
+    // ===== 下发指令 =====
     if (path === "/send" && method === "GET") {
       const id = url.searchParams.get("client") || "1";
       await kv.set([`cmd_${id}`], JSON.stringify({
@@ -53,6 +82,7 @@ Deno.serve(async (request) => {
       return json({ ok: true }, 200, headers);
     }
 
+    // ===== 客户端拉指令 =====
     if (path === "/getcmd" && method === "GET") {
       const id = url.searchParams.get("client") || "1";
       const res = await kv.get([`cmd_${id}`]);
@@ -65,6 +95,7 @@ Deno.serve(async (request) => {
       return json({ ok: true, ...cmd }, 200, headers);
     }
 
+    // ===== 批量下发 =====
     if (path === "/sendall" && method === "GET") {
       const cmd = {
         cmd: url.searchParams.get("cmd") || "",
@@ -81,6 +112,7 @@ Deno.serve(async (request) => {
       return json({ ok: true, count: ops.length }, 200, headers);
     }
 
+    // ===== 清理离线 =====
     if (path === "/cleanup" && method === "GET") {
       const iter = kv.list({ prefix: ["client_"] });
       const now = Date.now();
@@ -97,6 +129,7 @@ Deno.serve(async (request) => {
       return json({ ok: true, cleaned }, 200, headers);
     }
 
+    // ===== 上传脚本 =====
     if (path === "/upload_script" && method === "POST") {
       const name = (url.searchParams.get("name") || "任务主脚本");
       const body = await request.text();
@@ -106,12 +139,14 @@ Deno.serve(async (request) => {
       return json({ ok: true, name, size: body.length, ver }, 200, headers);
     }
 
+    // ===== 查脚本版本 =====
     if (path === "/script_version" && method === "GET") {
       const name = (url.searchParams.get("name") || "任务主脚本");
       const res = await kv.get([`script_ver_${name}`]);
       return json({ ok: true, ver: (res.value as string) || "" }, 200, headers);
     }
 
+    // ===== 下载脚本 =====
     if (path === "/get_script" && method === "GET") {
       const name = (url.searchParams.get("name") || "任务主脚本");
       const res = await kv.get([`script_${name}`]);
@@ -122,7 +157,7 @@ Deno.serve(async (request) => {
 
     return json({
       msg: "中控服务端运行中（Deno Deploy 版）",
-      endpoints: ["/report", "/list", "/send", "/getcmd", "/sendall",
+      endpoints: ["/sync", "/report", "/list", "/send", "/getcmd", "/sendall",
                   "/cleanup", "/upload_script", "/script_version", "/get_script"],
     }, 200, headers);
   } catch (e) {

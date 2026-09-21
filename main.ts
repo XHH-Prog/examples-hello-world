@@ -1,4 +1,4 @@
-// 挂机中控服务端 - Deno Deploy
+// 挂机中控服务端 - Deno Deploy 字符串key版
 const TOKEN = "lblt_2026_kz_9a3f";
 
 const kv = await Deno.openKv();
@@ -19,13 +19,13 @@ Deno.serve(async (request) => {
   }
 
   try {
-    // ===== 同步：上报状态 + 拉指令 =====
+    // ===== 1. 同步：上报 + 拉指令 =====
     if (path === "/sync" && request.method === "GET") {
       const clientId = url.searchParams.get("client") || "1";
       const doWrite = url.searchParams.get("write") !== "0";
 
       if (doWrite) {
-        await kv.set([`client_${clientId}`], JSON.stringify({
+        await kv.set("client_" + clientId, JSON.stringify({
           status: parseInt(url.searchParams.get("status") || "0") || 0,
           task: url.searchParams.get("task") || "",
           progress: url.searchParams.get("progress") || "0%",
@@ -36,23 +36,23 @@ Deno.serve(async (request) => {
       }
 
       let cmd = { cmd: "", task: "" };
-      const cmdRes = await kv.get([`cmd_${clientId}`]);
+      const cmdRes = await kv.get("cmd_" + clientId);
       if (cmdRes.value) {
         const parsed = JSON.parse(cmdRes.value as string);
         if (Date.now() - parsed.time < 300000) cmd = parsed;
-        await kv.delete([`cmd_${clientId}`]);
+        await kv.delete("cmd_" + clientId);
       }
 
       return json({ ok: true, cmd: cmd.cmd || "", task: cmd.task || "" }, 200, headers);
     }
 
-    // ===== 查看所有客户端状态 =====
+    // ===== 2. 查看所有客户端 =====
     if (path === "/list" && request.method === "GET") {
       const now = Date.now();
-      const iter = kv.list({ prefix: ["client_"] });
+      const iter = kv.list({ prefix: "client_" });
       const results = [];
       for await (const entry of iter) {
-        const id = (entry.key[0] as string).replace("client_", "");
+        const id = (entry.key as string).replace("client_", "");
         const data = JSON.parse(entry.value as string);
         data.online = now - data.heartbeat < 60000;
         data.id = id;
@@ -62,10 +62,10 @@ Deno.serve(async (request) => {
       return json(results, 200, headers);
     }
 
-    // ===== 给单个客户端下发指令 =====
+    // ===== 3. 单客户端下发 =====
     if (path === "/send" && request.method === "GET") {
       const clientId = url.searchParams.get("client") || "1";
-      await kv.set([`cmd_${clientId}`], JSON.stringify({
+      await kv.set("cmd_" + clientId, JSON.stringify({
         cmd: url.searchParams.get("cmd") || "",
         task: url.searchParams.get("task") || "",
         time: Date.now(),
@@ -73,24 +73,23 @@ Deno.serve(async (request) => {
       return json({ ok: true }, 200, headers);
     }
 
-    // ===== 给所有客户端批量下发 =====
+    // ===== 4. 批量下发 =====
     if (path === "/sendall" && request.method === "GET") {
       const cmd = {
         cmd: url.searchParams.get("cmd") || "",
         task: url.searchParams.get("task") || "",
         time: Date.now(),
       };
-      const iter = kv.list({ prefix: ["client_"] });
+      const iter = kv.list({ prefix: "client_" });
       const ops = [];
       for await (const entry of iter) {
-        const id = (entry.key[0] as string).replace("client_", "");
-        ops.push(kv.set([`cmd_${id}`], JSON.stringify(cmd)));
+        const id = (entry.key as string).replace("client_", "");
+        ops.push(kv.set("cmd_" + id, JSON.stringify(cmd)));
       }
       await Promise.all(ops);
       return json({ ok: true, count: ops.length }, 200, headers);
     }
 
-    // ===== 根路径 =====
     return json({ msg: "中控服务端运行中" }, 200, headers);
   } catch (e) {
     return json({ ok: false, error: (e as Error).message }, 500, headers);
